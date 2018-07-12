@@ -323,8 +323,10 @@ Program.main()
   - [X] Understand BEAM at a low-level
   - [?] Understand compilers from the backend
   - [ ] Write better Elixir code!
-
+    
 * Resources
+  - Presentation & Code:
+    https://github.com/seancribbs/nanocompiler
   - The BEAM Book: https://github.com/happi/theBeamBook
   - =erlc= docs: http://erlang.org/doc/man/erlc.html
   - =mix decompile=: https://github.com/michalmuskala/decompile
