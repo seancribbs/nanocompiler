@@ -1,0 +1,337 @@
+* Compiling to the BEAM
+
+  Sean Cribbs
+  KC Elixir
+  12 July 2018
+* Goals
+  - [ ] Understand BEAM at a low-level
+  - [ ] Understand compilers from the backend
+  - [ ] Write better Elixir code!
+* What is BEAM?
+  "Bojumil's/Bjorn's Abstract Machine"
+   aka.
+   the core of Erlang Runtime System (ERTS)
+
+  - A "register machine"
+  - Directly-threaded byte-code interpreter
+  - Non-preemptive, Reduction counting
+  - Garbage-collecting
+* What is BEAM?
+** A register machine
+   - Operands (arguments) are stored in registers
+   - Results are stored in the accumulator "X0"
+   - Stack is used for saving registers ("Y" regs)
+*** Meaning...
+    - LOTS of registers (*virtual* machine after all)
+    - Local variables are in registers
+
+* What is BEAM?
+** Contrast to stack machine
+   - Operands stored on stack
+   - Results pushed back on stack
+   - No registers!
+** Contrast to x86
+   - Operands in registers or memory
+   - Results stored in *AX
+   - Local variables on stack
+   - BP / SP manipulation for calls
+* What is BEAM?
+** Directly-threaded interpreter
+   *NOT* "threads" or concurrency - but the path 
+   code takes.
+
+*** Contrast to naive dispatch
+    #+begin_src c
+    while (*ip != STOP) {
+      switch (*ip++) {
+        case OP1: do_op_1(); break;
+        case OP2: do_op_2(); break;
+        // ..
+      }
+    }
+    #+end_src
+* What is BEAM?
+** PROBLEM: Too many conditional jumps
+   - EXPENSIVE at runtime!
+   - Threaded code trades off loader complexity
+     
+*** Token-threaded
+    Opcode indexes into a "jump table", 
+    load the label and jump/call.
+*** Subroutine-threaded
+    Store the address in memory of the 
+    function in the jump table.
+*** Directly-threaded
+    Replace call/return with direct jumps.
+
+* What is BEAM?
+** Non-preemptive, Reduction counting
+   - Processes are not suspended arbitrarily,
+     only at points where GC is safe
+
+   - 1 Reduction ~ 1 Function Call
+
+   - C functions (NIFs/BIFs) are exempt, so take 
+     extra care to count/yield
+* What is BEAM?
+** Getting opcodes
+ #+begin_src elixir
+ defmodule Add do
+   def add(a,b), do: id(a) + id(b)
+   def id(x), do: x
+ end
+ #+end_src
+
+ #+begin_src shell
+ $ mix archive.install git \
+     git@github.com:michalmuskala/decompile.git
+ $ elixirc add.ex 
+ $ mix decompile Add --to asm
+ $ less Elixir.Add.S
+ #+end_src   
+* What is BEAM?
+** Getting opcodes
+ #+begin_src elixir
+   def id(x), do: x
+ #+end_src
+ #+begin_src erlang
+ {function, id, 1, 12}.
+   {label,11}.
+     {line,[{location,"add.ex",3}]}.
+     {func_info,{atom,'Elixir.Add'},{atom,id},1}.
+   {label,12}.
+     return.
+ #+end_src
+
+ - Function name and info
+ - Labels
+ - return
+
+* What is BEAM?
+** Getting opcodes
+ #+begin_src elixir
+   def add(a,b), do: id(a) + id(b)
+ #+end_src
+ #+begin_src erlang
+ {function, add, 2, 10}.
+   {label,9}.
+     {line,[{location,"add.ex",2}]}.
+     {func_info,{atom,'Elixir.Add'},{atom,add},2}.
+   {label,10}.
+     {allocate,1,2}.
+     {move,{x,1},{y,0}}.
+     {line,[{location,"add.ex",2}]}.
+     {call,1,{f,12}}.
+     {move,{x,0},{x,1}}.
+     {move,{y,0},{x,0}}.
+     {move,{x,1},{y,0}}.
+     {line,[{location,"add.ex",2}]}.
+     {call,1,{f,12}}.
+     {line,[{location,"add.ex",2}]}.
+     {gc_bif,'+',{f,0},1,[{y,0},{x,0}],{x,0}}.
+     {deallocate,1}.
+     return.
+ #+end_src
+ - Stack push, Y registers
+ - call local function
+ - call BIF
+ - Pop stack
+
+* What is BEAM?
+
+There are > 150 BEAM opcodes!
+
+Instead of listing them all, let's write some code.
+
+* What is BEAM?
+** What are we NOT covering?
+   - .beam file format
+   - Core Erlang
+   - Erlang compiler phases
+   - HiPE / native compilation
+
+* A Simple Compiler
+** Goals
+   Based on the "nanocompiler" idea:
+
+   - Design a simple language and abstract format
+   - Generate some BEAM assembly from that
+   - Add a new feature, repeat
+** Phases
+   - Produce integer
+   - Unary operations (add one, subtract one)
+   - ...?
+* A Simple Compiler
+** Reverse engineer the boilerplate
+   #+begin_src elixir
+   defmodule Program do
+     def run(), do: 42
+   end
+   #+end_src
+* A Simple Compiler
+** Reverse engineer the boilerplate   
+   #+begin_src erlang
+   {module, 'Elixir.Program'}.
+   {exports, [{'__info__',1},{module_info,0},
+              {module_info,1},{main,0}]}.
+   {attributes, []}.
+   {labels, 15}.
+   %% ... skipping generated code
+   {function, main, 0, 10}.
+   {line,[{location,"program.ex",2}]}.
+    {func_info,{atom,'Elixir.Program'},{atom,main},0}.
+   {label,10}.
+    {move,{integer,42},{x,0}}.
+    return.
+   #+end_src
+   - Boilerplate: module & exports
+   - Template: "run" function
+   - Extra: track labels?
+
+* A Simple Compiler
+** Prep the boilerplate
+#+begin_src elixir
+@prelude [
+  {:module, Program},
+  {:exports, [main: 0]},
+  {:attributes, []},
+  {:labels, 3},
+  
+  {:function, :main, 0, 2},
+  {:label, 1},
+  {:line, []},
+  {:func_info, {:atom, Program}, {:atom, :main}, 0},
+  {:label, 2}
+]
+#+end_src
+
+* A Simple Compiler
+** Compile to a string
+#+begin_src elixir
+  def compile_to_string(prog) do
+    beam = @prelude ++ compile(prog) ++ [:return]
+
+    for op <- beam do
+      :io_lib.format('~p.~n', [op])
+    end
+  end
+#+end_src
+* A Simple Compiler
+** Define the first AST type
+#+begin_src elixir
+defmodule Nanocompiler.Number do
+  defstruct [:int]
+
+  @type t() :: %Nanocompiler.Number{int: integer()}
+end
+#+end_src
+
+* A Simple Compiler
+** Compile an integer program
+#+begin_src elixir
+  def compile(prog) do
+    case prog do
+      %Number{int: i} ->
+        [{:move,{:integer,i},{:x,0}}]
+      _ ->
+        raise "Expression #{inspect prog} not implemented!"
+    end
+  end
+#+end_src
+
+* A Simple Compiler
+** Try it out!
+   #+begin_src elixir
+   alias Nanocompiler.{Compiler,Number}
+   program = %Number{int: 42}
+   Compiler.compile(program)
+   # => [{:move,{:integer,42},{:x,0}}]
+   asm = Compiler.compile_to_string(program)
+   # => LOTS OF STUFF
+   File.write!("Elixir.Program.S", asm)
+   :compile.file(Program, [:from_asm])
+   # => {:ok, Program}
+   Program.main()
+   # => 42
+   #+end_src
+* A Simple Compiler
+** Add unary operations
+#+begin_src elixir
+def run(a), do: a + 1
+#+end_src
+#+begin_src erlang
+%% ... lots elided
+  {label,10}.
+    {line,[{location,"program.ex",2}]}.
+    {gc_bif,'+',{f,0},1,[{x,0},{integer,41}],{x,0}}.
+    return.
+
+%% {gc_bif, Bif, Lbl, Live, [Arg, ...], Reg}
+#+end_src
+  - "Bif" - the built-in function to call
+  - "Lbl" - where to jump if it fails
+  - "Live" is number of registers you're using
+  - "Reg" is where to put the result
+* A Simple Compiler
+** Add unary operations
+#+begin_src elixir
+defmodule Nanocompiler.Prim1 do
+  defstruct [:op, :expr]
+
+  @type t() :: %Nanocompiler.Prim1{
+          op: :add1 | :sub1,
+          expr: Nanocompiler.expr()
+        }
+end
+#+end_src
+
+* A Simple Compiler
+** Add unary operations
+#+begin_src elixir
+  def compile(prog) do
+    case prog do
+      %Prim1{op: op, expr: e} ->
+        bif =
+          case op do
+            :add1 -> :+
+            :sub1 -> :-
+          end
+
+        compile(e) ++
+          [
+            {:gc_bif, bif, {:f, 0}, 1, [{:x, 0}, {:integer, 1}], {:x, 0}}
+          ]
+    # ... rest of the clauses
+#+end_src
+* A Simple Compiler
+** Add unary operations
+#+begin_src elixir
+program = %Prim1{op: :add1, expr: %Number{int: 42}}
+Compiler.compile(program)
+# => [
+#     {:move, {:integer, 42}, {:x, 0}},
+#     {:gc_bif, :+, {:f, 0}, 1, [x: 0, integer: 1], {:x, 0}}
+#    ]
+File.write!("Elixir.Program.S", 
+            Compiler.compile_to_string(program))
+:compile.file(Program, [:from_asm])
+Program.main()
+# => 43
+#+end_src
+
+* Recap our Goals
+  - [X] Understand BEAM at a low-level
+  - [?] Understand compilers from the backend
+  - [ ] Write better Elixir code!
+
+* Resources
+  - The BEAM Book: https://github.com/happi/theBeamBook
+  - =erlc= docs: http://erlang.org/doc/man/erlc.html
+  - =mix decompile=: https://github.com/michalmuskala/decompile
+  - Joe Politz's Swarthmore Compilers Course:
+    https://www.cs.swarthmore.edu/~jpolitz/cs75/s16/
+    https://github.com/compilers-course-materials/
+  - Lindsey Kuper's blog: 
+    http://composition.al/blog/2017/07/31/my-first-fifteen-compilers/
+  - Indiana U Compilers Course:
+    https://github.com/IUCompilerCourse/Essentials-of-Compilation
