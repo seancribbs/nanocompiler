@@ -32,19 +32,40 @@ defmodule Nanocompiler.Compiler do
     beam = @prelude ++ compile(prog) ++ [:return]
 
     for op <- beam do
-      :io_lib.format('~p.~n', [op_to_beam(op)])
+      :io_lib.format('~p.~n', [op])
     end
   end
 
   @doc """
   Converts our abstract operations into BEAM instructions.
   """
-  def op_to_beam(op) do
+  def op_to_beam(_op) do
     # TODO
     nil
   end
 
-  @spec compile(Nanocompiler.expr()) :: [ASM.instruction()]
+  alias Nanocompiler.{Number, Prim1}
+
+  # @spec compile(Nanocompiler.expr()) :: [ASM.instruction()]
   def compile(prog) do
+    case prog do
+      %Prim1{op: op, expr: e} ->
+        bif =
+          case op do
+            :add1 -> :+
+            :sub1 -> :-
+          end
+
+        compile(e) ++
+          [
+            {:gc_bif, bif, {:f, 0}, 1, [{:x, 0}, {:integer, 1}], {:x, 0}}
+          ]
+
+      %Number{int: i} ->
+        [{:move, {:integer, i}, {:x, 0}}]
+
+      _ ->
+        raise "Expression #{inspect(prog)} not implemented!"
+    end
   end
 end
