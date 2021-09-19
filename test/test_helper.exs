@@ -21,7 +21,7 @@ defmodule Nanocompiler.TestHelpers do
     for {{prog, result}, idx} <- Enum.with_index(cases) do
       quote do
         test "#{unquote(label)}-#{unquote(idx)}" do
-          assert_run unquote(prog), "#{unquote(label)}#{unquote(idx)}", unquote(result)
+          assert_run(unquote(prog), "#{unquote(label)}#{unquote(idx)}", unquote(result))
         end
       end
     end
