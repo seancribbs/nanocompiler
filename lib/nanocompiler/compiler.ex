@@ -44,10 +44,14 @@ defmodule Nanocompiler.Compiler do
     nil
   end
 
-  alias Nanocompiler.{Number, Prim1}
+  alias Nanocompiler.{Number, Prim1, ID, Let}
+
+  def compile(prog) do
+    compile_env(prog, 1, %{})
+  end
 
   # @spec compile(Nanocompiler.expr()) :: [ASM.instruction()]
-  def compile(prog) do
+  def compile_env(prog, vars, env) do
     case prog do
       %Prim1{op: op, expr: e} ->
         bif =
@@ -56,13 +60,37 @@ defmodule Nanocompiler.Compiler do
             :sub1 -> :-
           end
 
-        compile(e) ++
+        compile_env(e, vars, env) ++
           [
             {:gc_bif, bif, {:f, 0}, 1, [{:x, 0}, {:integer, 1}], {:x, 0}}
           ]
 
       %Number{int: i} ->
         [{:move, {:integer, i}, {:x, 0}}]
+
+      %Let{binds: [{var, binding} | bindings]} = let ->
+        # We want to evaluate the binding first, then move the result into a new
+        # X register, and then increment the number of registers and save the
+        # binding for the nested expression.
+        #
+        # Because let expressions allow subsequent bindings to refer to previous
+        # ones, we recursively consume them until they are empty and then
+        # compile the nested expression.
+        compile_env(binding, vars, env) ++
+            [{:move, {:x, 0}, {:x, vars}}]
+          ++
+          compile_env(%{let | binds: bindings}, vars + 1, Map.put(env, var, vars))
+
+      %Let{binds: [], expr: e} ->
+        compile_env(e, vars, env)
+
+      %ID{name: var} ->
+        # Referring to an ID means you want to use it in the next operation, so
+        # we move it into the first X register.
+        case env[var] do
+          nil -> raise "Unbound variable '#{var}' in expression"
+          reg -> [{:move, {:x, reg}, {:x, 0}}]
+        end
 
       _ ->
         raise "Expression #{inspect(prog)} not implemented!"
