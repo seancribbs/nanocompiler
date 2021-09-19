@@ -24,3 +24,7 @@ nanocompiler-*.tar
 
 # Ignore generated erlang files
 src/*.erl
+
+# Ignore test artifacts
+Elixir.Program.*
+/output/

@@ -23,6 +23,9 @@ const -> number : ?NUMBER(unwrap('$1')).
 
 Erlang code.
 
+-define(TO_STR(CharList),
+        'Elixir.List':to_string(CharList)).
+
 -define(LET(Binds, Expr),
         #{'__struct__' => 'Elixir.Nanocompiler.Let',
           binds => Binds,
@@ -35,14 +38,12 @@ Erlang code.
 
 -define(ID(Name),
        #{'__struct__' => 'Elixir.Nanocompiler.ID',
-         name => Name}).
+         name => ?TO_STR(Name)}).
 
 -define(NUMBER(Int),
        #{'__struct__' => 'Elixir.Nanocompiler.Number',
          int => Int}).
 
--define(TO_STR(CharList),
-        'Elixir.List':to_string(CharList)).
 
 unwrap({_Kind, _Line, Value}) -> Value;
 unwrap({Kind,  _Line})        -> Kind;

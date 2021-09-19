@@ -31,6 +31,7 @@ defmodule Nanocompiler.Runner do
     # Between test runs, it is important to purge the module from memory. In the
     # future we could allow the caller to define the name of the module.
     :code.purge(Program)
+    :code.delete(Program)
     :ok = compile(program, outfilename)
 
     resultfilename = outfilename <> ".out"
@@ -48,7 +49,7 @@ defmodule Nanocompiler.Runner do
 
     program
     |> Compiler.compile_to_string()
-    |> write_file(filename)
+    |> write_file(outfilename)
 
     assemble(outfilename)
   end
